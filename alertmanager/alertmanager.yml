@@ -1,0 +1,19 @@
+# Demo timings are short on purpose (real life: group_wait 30s, group_interval 5m, repeat_interval 4h).
+route:
+  receiver: oncall
+  group_by: [alertname, service]
+  group_wait: 2s
+  group_interval: 5s
+  repeat_interval: 10m
+
+receivers:
+  - name: oncall
+    webhook_configs:
+      - url: http://oncall:9094/alert
+        send_resolved: true
+
+# While HighErrorRate is firing, a HighLatency page for the same service is noise: one incident is enough.
+inhibit_rules:
+  - source_matchers: ['alertname="HighErrorRate"']
+    target_matchers: ['alertname="HighLatency"']
+    equal: [service]

@@ -1,0 +1,78 @@
+# Incident response on one host: app + traffic, Prometheus (detects), Alertmanager (routes, groups, silences, inhibits),
+# oncall (the pager stand-in: incidents, escalation, runbook, postmortem). No image is built.
+name: ir
+
+networks:
+  default:
+    name: ir-net
+
+x-py: &py
+  image: ${PYTHON_IMAGE:-python:3.12-slim}
+  restart: unless-stopped
+  user: "65534:65534"
+  working_dir: /app
+  environment: &pyenv
+    PYTHONDONTWRITEBYTECODE: "1"
+    PYTHONUNBUFFERED: "1"
+
+services:
+  app:
+    <<: *py
+    container_name: ir-app
+    command: ["python", "app.py"]
+    ports: ["8080:8080"]                    # the shop (and its fault-injection endpoints: demo only): open from your laptop
+    volumes: ["./app:/app:ro"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  traffic:
+    <<: *py
+    container_name: ir-traffic
+    command: ["python", "traffic.py"]
+    environment: {<<: *pyenv, TARGET: "http://app:8080", RATE: "${TRAFFIC_RATE:-20}"}
+    volumes: ["./app:/app:ro"]
+    depends_on: [app]
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v2.54.1}
+    container_name: ir-prometheus
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=1h"]
+    ports: ["127.0.0.1:9090:9090"]          # localhost only
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  alertmanager:
+    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager:v0.27.0}
+    container_name: ir-alertmanager
+    restart: unless-stopped
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager"]
+    ports: ["127.0.0.1:9093:9093"]          # localhost only
+    volumes: ["./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9093/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  oncall:
+    <<: *py
+    container_name: ir-oncall
+    command: ["python", "oncall.py"]
+    environment: {<<: *pyenv, STATE_DIR: /state, APP_URL: "http://app:8080", AM_URL: "http://alertmanager:9093", ACK_TIMEOUT: "${ACK_TIMEOUT:-15}"}
+    ports: ["8081:8081"]                    # the on-call console: open from your laptop
+    volumes: ["./oncall:/app:ro", "./state:/state"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20

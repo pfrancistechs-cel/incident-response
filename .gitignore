@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+*.pem
+.DS_Store
+state/*.json
+state/*.tmp
+state/postmortems/

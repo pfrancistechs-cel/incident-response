@@ -1,0 +1,24 @@
+groups:
+  - name: shop
+    interval: 5s
+    rules:
+      - record: ir:error_ratio:rate20s
+        expr: sum(rate(ir_requests_total{code=~"5.."}[20s])) / sum(rate(ir_requests_total[20s]))
+      - record: ir:latency_avg:rate20s
+        expr: rate(ir_request_seconds_sum[20s]) / rate(ir_request_seconds_count[20s])
+
+      - alert: HighErrorRate
+        expr: ir:error_ratio:rate20s > 0.05
+        for: 10s
+        labels: {severity: page, service: shop, runbook: reset-pool}
+        annotations:
+          summary: "More than 5% of checkouts are failing"
+          runbook: "reset-pool: clear the connection pool, then verify checkouts succeed"
+
+      - alert: HighLatency
+        expr: ir:latency_avg:rate20s > 0.5
+        for: 10s
+        labels: {severity: page, service: shop}
+        annotations:
+          summary: "Checkouts take more than 0.5 seconds on average"
+          runbook: "none: a human has to find the cause"
